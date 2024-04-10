@@ -1,26 +1,59 @@
 import { ConvexError, v } from "convex/values";
-import { mutation, query} from "./_generated/server"
+import { MutationCtx, QueryCtx, mutation, query} from "./_generated/server"
+import { getUser } from "./users";
+import { Cone } from "lucide-react";
+import { cookies } from "next/headers";
+
+async function hasAccessToOrg(
+    ctx:QueryCtx | MutationCtx, 
+    tokenIdentifier: string,
+    orgId: string) 
+    {
+        const user = await getUser (ctx,tokenIdentifier);
+
+        const hasAccess = user.orgIds.includes(orgId) || 
+        user.tokenIdentifier.includes(orgId);
+    
+        return hasAccess;
+}
+
+
 
 export const createFile = mutation({
     args: {
-        name: v.string()
+        name: v.string(),
+        orgId: v.string()
     },
     async handler(ctx, args) {
         const identity= await ctx.auth.getUserIdentity();
+
         if (!identity){
-            throw new ConvexError(' You Must Log-in to Upload File')
+            throw new ConvexError(' You Must Log-in to Upload File');
+        }
+
+        const hasAccess = await hasAccessToOrg(
+        ctx , 
+        identity.tokenIdentifier,
+        args.orgId)
+
+        if( !hasAccess)
+        {
+            throw new ConvexError('you do not have access to this org')
 
         }
 
         await ctx.db.insert('files',{
             name: args.name,
+            orgId: args.orgId,
         })
     },
 });
 
 
 export const getFiles = query({
-    args: {},
+    args: {
+        orgId: v.string(),
+    },
     async handler(ctx, args) {
         const identity= await ctx.auth.getUserIdentity();
 
@@ -28,8 +61,21 @@ export const getFiles = query({
             return[];
         }
 
+        const hasAccess = await hasAccessToOrg(
+            ctx , 
+            identity.tokenIdentifier,
+            args.orgId)
+            
+        if(!hasAccess){
+            return[];
+        }
+        
+        
 
-        return ctx.db.query('files').collect()
+        return ctx.db
+            .query('files')
+            .withIndex('by_orgId', q => q.eq('orgId', args.orgId))
+            .collect();
 
     }
 })
